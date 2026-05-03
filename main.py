@@ -72,25 +72,36 @@ def split_audio(audio_path: str, tmpdir: str, chunk_minutes: int = 20) -> list:
     return chunks
 
 
-def transcribe_chunk(audio_path: str) -> str:
+def transcribe_chunk(audio_path: str, retry: int = 3) -> str:
     if not GROQ_API_KEY:
         raise Exception("未设置 GROQ_API_KEY 环境变量")
     with open(audio_path, "rb") as f:
         audio_data = f.read()
-    with httpx.Client(timeout=300) as client:
-        response = client.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            files={"file": ("audio.mp3", audio_data, "audio/mpeg")},
-            data={
-                "model": "whisper-large-v3",
-                "language": "zh",
-                "response_format": "text"
-            }
-        )
-    if response.status_code != 200:
+    for attempt in range(retry):
+        with httpx.Client(timeout=300) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("audio.mp3", audio_data, "audio/mpeg")},
+                data={
+                    "model": "whisper-large-v3",
+                    "language": "zh",
+                    "response_format": "text"
+                }
+            )
+        if response.status_code == 200:
+            return response.text
+        # Rate limit: parse wait time and sleep
+        if response.status_code == 429:
+            import time, re
+            match = re.search(r'try again in (\d+)m([\d.]+)s', response.text)
+            wait = 60
+            if match:
+                wait = int(match.group(1)) * 60 + float(match.group(2)) + 5
+            time.sleep(wait)
+            continue
         raise Exception(f"Groq 转写失败: {response.text}")
-    return response.text
+    raise Exception("多次重试后仍失败，请稍后再试")
 
 
 def transcribe_audio(audio_path: str, tmpdir: str) -> str:
