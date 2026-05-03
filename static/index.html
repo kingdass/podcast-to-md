@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>播客转文稿</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1a1a18;
+    --paper: #f5f0e8;
+    --cream: #ede8dc;
+    --accent: #c84b2f;
+    --muted: #8a8478;
+    --border: #d4cfc4;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Noto Serif SC', serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    border-bottom: 2px solid var(--ink);
+    padding: 24px 48px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+
+  header h1 {
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  header span {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  .main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: calc(100vh - 65px);
+  }
+
+  /* Left panel */
+  .left {
+    border-right: 1px solid var(--border);
+    padding: 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .section-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .url-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    padding: 14px 16px;
+    border: 1.5px solid var(--border);
+    background: white;
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input[type="text"]:focus {
+    border-color: var(--ink);
+  }
+
+  input[type="text"]::placeholder {
+    color: var(--muted);
+  }
+
+  .btn-primary {
+    padding: 14px 24px;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.2s;
+    width: 100%;
+  }
+
+  .btn-primary:hover { background: var(--accent); }
+  .btn-primary:disabled { background: var(--muted); cursor: not-allowed; }
+
+  .status-box {
+    background: var(--cream);
+    border: 1px solid var(--border);
+    padding: 20px;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+  }
+
+  .status-text {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  .status-text.error { color: var(--accent); }
+  .status-text.success { color: #2d6a4f; }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .step {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+
+  .step-num {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    padding-top: 2px;
+    min-width: 20px;
+  }
+
+  .step-text {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* Progress dots */
+  .dots {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  .dot:nth-child(2) { animation-delay: 0.2s; }
+  .dot:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+
+  /* Right panel */
+  .right {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .right-header {
+    padding: 20px 48px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 0;
+  }
+
+  .tab {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .tab.active {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+
+  .tab:not(:last-child) { border-right: none; }
+
+  .btn-download {
+    padding: 8px 16px;
+    background: transparent;
+    border: 1.5px solid var(--ink);
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--ink);
+    transition: all 0.15s;
+  }
+
+  .btn-download:hover {
+    background: var(--ink);
+    color: var(--paper);
+  }
+
+  .btn-download:disabled {
+    border-color: var(--border);
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  .output-area {
+    flex: 1;
+    padding: 40px 48px;
+    overflow-y: auto;
+  }
+
+  .output-empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    opacity: 0.3;
+  }
+
+  .output-empty .big-char {
+    font-size: 64px;
+    line-height: 1;
+  }
+
+  .output-empty p {
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  /* Markdown rendered */
+  .markdown-content {
+    font-size: 15px;
+    line-height: 1.9;
+    color: var(--ink);
+  }
+
+  .markdown-content h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .markdown-content h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 32px;
+    margin-bottom: 12px;
+    color: var(--accent);
+    font-family: 'Space Mono', monospace;
+    letter-spacing: 0.05em;
+  }
+
+  .markdown-content p {
+    margin-bottom: 16px;
+    text-align: justify;
+  }
+
+  /* Raw text */
+  .raw-content {
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .main { grid-template-columns: 1fr; }
+    .left { border-right: none; border-bottom: 1px solid var(--border); padding: 32px 24px; }
+    .right-header { padding: 16px 24px; }
+    .output-area { padding: 24px; }
+    header { padding: 20px 24px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Podcast → MD</h1>
+  <span>播客转文稿工具</span>
+</header>
+
+<div class="main">
+  <!-- Left: Input -->
+  <div class="left">
+    <div>
+      <div class="section-label">播客链接</div>
+      <div class="url-group">
+        <input type="text" id="urlInput" placeholder="粘贴小宇宙或其他平台的节目链接…" />
+        <button class="btn-primary" id="startBtn" onclick="startTranscribe()">开始转写</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">状态</div>
+      <div class="status-box">
+        <div class="status-text" id="statusText">等待输入链接…</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">流程说明</div>
+      <div class="steps">
+        <div class="step">
+          <span class="step-num">01</span>
+          <span class="step-text">yt-dlp 自动抓取音频文件</span>
+        </div>
+        <div class="step">
+          <span class="step-num">02</span>
+          <span class="step-text">Groq Whisper 语音转文字（中文优化）</span>
+        </div>
+        <div class="step">
+          <span class="step-num">03</span>
+          <span class="step-text">DeepSeek 整理文稿、分段加标题</span>
+        </div>
+        <div class="step">
+          <span class="step-num">04</span>
+          <span class="step-text">输出 Markdown，可直接下载打印</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Output -->
+  <div class="right">
+    <div class="right-header">
+      <div class="tabs">
+        <button class="tab active" id="tabMd" onclick="switchTab('md')">文稿预览</button>
+        <button class="tab" id="tabRaw" onclick="switchTab('raw')">原始转写</button>
+      </div>
+      <button class="btn-download" id="downloadBtn" disabled onclick="downloadMd()">下载 .md</button>
+    </div>
+    <div class="output-area" id="outputArea">
+      <div class="output-empty" id="emptyState">
+        <div class="big-char">声</div>
+        <p>转写结果将在此处显示</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentMarkdown = '';
+  let currentRaw = '';
+  let currentTab = 'md';
+
+  function setStatus(msg, type = '') {
+    const el = document.getElementById('statusText');
+    el.className = 'status-text ' + type;
+    if (type === 'loading') {
+      el.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span>${msg}</span>
+      </div>`;
+    } else {
+      el.textContent = msg;
+    }
+  }
+
+  async function startTranscribe() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) { setStatus('请先输入播客链接', 'error'); return; }
+
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    document.getElementById('downloadBtn').disabled = true;
+
+    setStatus('正在下载音频…', 'loading');
+    document.getElementById('emptyState') && (document.getElementById('emptyState').style.display = 'flex');
+
+    try {
+      setStatus('正在下载音频并转写，请稍候（可能需要几分钟）…', 'loading');
+
+      const resp = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        setStatus(data.detail || '发生错误，请重试', 'error');
+        btn.disabled = false;
+        return;
+      }
+
+      currentMarkdown = data.markdown;
+      currentRaw = data.raw;
+
+      setStatus('转写完成 ✓', 'success');
+      renderOutput();
+      document.getElementById('downloadBtn').disabled = false;
+
+    } catch (e) {
+      setStatus('网络错误，请检查服务是否正常运行', 'error');
+    }
+
+    btn.disabled = false;
+  }
+
+  function renderOutput() {
+    const area = document.getElementById('outputArea');
+    if (currentTab === 'md') {
+      area.innerHTML = `<div class="markdown-content">${parseMarkdown(currentMarkdown)}</div>`;
+    } else {
+      area.innerHTML = `<div class="raw-content">${escapeHtml(currentRaw)}</div>`;
+    }
+  }
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById('tabMd').className = 'tab' + (tab === 'md' ? ' active' : '');
+    document.getElementById('tabRaw').className = 'tab' + (tab === 'raw' ? ' active' : '');
+    if (currentMarkdown) renderOutput();
+  }
+
+  function parseMarkdown(text) {
+    return text
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/^(?!<[h])/gm, '')
+      .replace(/(<\/h[123]>)/g, '$1')
+      .split('\n').filter(l => l.trim()).map(l => {
+        if (l.startsWith('<h')) return l;
+        return `<p>${l}</p>`;
+      }).join('\n');
+  }
+
+  function escapeHtml(text) {
+    return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function downloadMd() {
+    if (!currentMarkdown) return;
+    const blob = new Blob([currentMarkdown], { type: 'text/markdown;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `podcast-${Date.now()}.md`;
+    a.click();
+  }
+
+  // Enter key
+  document.getElementById('urlInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startTranscribe();
+  });
+</script>
+</body>
+</html>
