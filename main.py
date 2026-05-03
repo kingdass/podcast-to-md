@@ -1,11 +1,13 @@
 import os
 import re
+import math
+import json
 import tempfile
 import subprocess
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -13,41 +15,68 @@ app = FastAPI()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 
+MAX_FILE_MB = 20
+
 
 class TranscribeRequest(BaseModel):
     url: str
 
 
 def download_audio(url: str, output_path: str) -> str:
-    """Use yt-dlp to download audio from URL."""
     cmd = [
-    "yt-dlp",
-    "--extract-audio",
-    "--audio-format", "mp3",
-    "--audio-quality", "5",        # 降低音质（0最高，9最低），5够转写用
-    "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",  # 单声道+16k采样率，专为语音识别优化
-    "--output", output_path,
-    "--no-playlist",
-    url
-]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        "yt-dlp",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "5",
+        "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",
+        "--output", output_path,
+        "--no-playlist",
+        url
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise Exception(f"下载失败: {result.stderr}")
-    # yt-dlp may append extension
     if not os.path.exists(output_path):
         output_path = output_path.replace(".mp3", "") + ".mp3"
     return output_path
 
 
-def transcribe_with_groq(audio_path: str) -> str:
-    """Transcribe audio using Groq's Whisper API."""
+def get_audio_duration(audio_path: str) -> float:
+    cmd = [
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-show_format", audio_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    return float(data["format"]["duration"])
+
+
+def split_audio(audio_path: str, tmpdir: str, chunk_minutes: int = 20) -> list:
+    duration = get_audio_duration(audio_path)
+    chunk_seconds = chunk_minutes * 60
+    num_chunks = math.ceil(duration / chunk_seconds)
+    chunks = []
+    for i in range(num_chunks):
+        start = i * chunk_seconds
+        chunk_path = os.path.join(tmpdir, f"chunk_{i:03d}.mp3")
+        cmd = [
+            "ffmpeg", "-i", audio_path,
+            "-ss", str(start),
+            "-t", str(chunk_seconds),
+            "-acodec", "copy",
+            "-y", chunk_path
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=120)
+        if os.path.exists(chunk_path):
+            chunks.append(chunk_path)
+    return chunks
+
+
+def transcribe_chunk(audio_path: str) -> str:
     if not GROQ_API_KEY:
         raise Exception("未设置 GROQ_API_KEY 环境变量")
-
     with open(audio_path, "rb") as f:
         audio_data = f.read()
-
-    import httpx
     with httpx.Client(timeout=300) as client:
         response = client.post(
             "https://api.groq.com/openai/v1/audio/transcriptions",
@@ -64,12 +93,28 @@ def transcribe_with_groq(audio_path: str) -> str:
     return response.text
 
 
-def polish_with_deepseek(raw_text: str) -> str:
-    """Use DeepSeek to clean up and format the transcription."""
-    if not DEEPSEEK_API_KEY:
-        # Return basic formatting if no DeepSeek key
-        return basic_format(raw_text)
+def transcribe_audio(audio_path: str, tmpdir: str) -> str:
+    file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+    if file_size_mb <= MAX_FILE_MB:
+        return transcribe_chunk(audio_path)
+    chunks = split_audio(audio_path, tmpdir, chunk_minutes=20)
+    if not chunks:
+        raise Exception("音频分段失败")
+    results = []
+    for i, chunk in enumerate(chunks):
+        try:
+            text = transcribe_chunk(chunk)
+            results.append(text.strip())
+        except Exception as e:
+            results.append(f"[第{i+1}段转写失败: {str(e)}]")
+    return "\n\n".join(results)
 
+
+def polish_with_deepseek(raw_text: str) -> str:
+    if not DEEPSEEK_API_KEY:
+        return basic_format(raw_text)
+    text_to_polish = raw_text[:8000] if len(raw_text) > 8000 else raw_text
+    remainder = raw_text[8000:] if len(raw_text) > 8000 else ""
     prompt = f"""你是一个播客文稿整理助手。请将以下语音转写的原始文字整理成干净、易读的 Markdown 格式文稿。
 
 要求：
@@ -80,8 +125,7 @@ def polish_with_deepseek(raw_text: str) -> str:
 5. 输出纯 Markdown，不要加任何解释
 
 原始文字：
-{raw_text}"""
-
+{text_to_polish}"""
     with httpx.Client(timeout=120) as client:
         response = client.post(
             "https://api.deepseek.com/chat/completions",
@@ -97,14 +141,14 @@ def polish_with_deepseek(raw_text: str) -> str:
         )
     if response.status_code != 200:
         return basic_format(raw_text)
-
     data = response.json()
-    return data["choices"][0]["message"]["content"]
+    polished = data["choices"][0]["message"]["content"]
+    if remainder:
+        polished += "\n\n" + basic_format(remainder)
+    return polished
 
 
 def basic_format(text: str) -> str:
-    """Basic formatting without AI."""
-    # Split into paragraphs by punctuation
     text = re.sub(r'([。！？])\s*', r'\1\n\n', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return f"# 播客文稿\n\n{text.strip()}"
@@ -114,33 +158,24 @@ def basic_format(text: str) -> str:
 async def transcribe(req: TranscribeRequest):
     if not req.url.strip():
         raise HTTPException(status_code=400, detail="请输入播客链接")
-
     with tempfile.TemporaryDirectory() as tmpdir:
         audio_path = os.path.join(tmpdir, "audio.mp3")
-
         try:
-            # Step 1: Download
             audio_path = download_audio(req.url, audio_path)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"音频下载失败：{str(e)}")
-
         try:
-            # Step 2: Transcribe
-            raw_text = transcribe_with_groq(audio_path)
+            raw_text = transcribe_audio(audio_path, tmpdir)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"语音转写失败：{str(e)}")
-
         try:
-            # Step 3: Polish
             markdown = polish_with_deepseek(raw_text)
         except Exception as e:
             markdown = basic_format(raw_text)
-
         return JSONResponse({
             "markdown": markdown,
             "raw": raw_text
         })
 
 
-# Serve frontend
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
