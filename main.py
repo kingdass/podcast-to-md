@@ -21,14 +21,15 @@ class TranscribeRequest(BaseModel):
 def download_audio(url: str, output_path: str) -> str:
     """Use yt-dlp to download audio from URL."""
     cmd = [
-        "yt-dlp",
-        "--extract-audio",
-        "--audio-format", "mp3",
-        "--audio-quality", "0",
-        "--output", output_path,
-        "--no-playlist",
-        url
-    ]
+    "yt-dlp",
+    "--extract-audio",
+    "--audio-format", "mp3",
+    "--audio-quality", "5",        # 降低音质（0最高，9最低），5够转写用
+    "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",  # 单声道+16k采样率，专为语音识别优化
+    "--output", output_path,
+    "--no-playlist",
+    url
+]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         raise Exception(f"下载失败: {result.stderr}")
